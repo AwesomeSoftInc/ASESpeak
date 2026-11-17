@@ -1,0 +1,100 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>ASESpeak</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <DefineConstants Condition="$([MSBuild]::IsOSPlatform('Windows'))">$(DefineConstants);WINDOWS</DefineConstants>
+  </PropertyGroup>
+
+  <!--
+   	cmake options
+  -->
+  <PropertyGroup>
+    <ESpeakUseKlatt Condition="'$(ESpeakUseKlatt)' == ''">auto</ESpeakUseKlatt>
+    <ESpeakUseSpeechPlayer Condition="'$(ESpeakUseSpeechPlayer)' == ''">auto</ESpeakUseSpeechPlayer>
+    <ESpeakUseMbrola Condition="'$(ESpeakUseMbrola)' == ''">auto</ESpeakUseMbrola>
+    <ESpeakUseLibSonic Condition="'$(ESpeakUseLibSonic)' == ''">auto</ESpeakUseLibSonic>
+    <ESpeakUseAsync Condition="'$(ESpeakUseAsync)' == ''">auto</ESpeakUseAsync>
+    <ESpeakUseLibPcAudio Condition="'$(ESpeakUseLibPcAudio)' == ''">auto</ESpeakUseLibPcAudio>
+    <ESpeakCompileIntonations Condition="'$(ESpeakCompileIntonations)' == ''">auto</ESpeakCompileIntonations>
+    <ESpeakEnableTests Condition="'$(ESpeakEnableTests)' == ''">auto</ESpeakEnableTests>
+    <ESpeakCompat Condition="'$(ESpeakCompat)' == ''">auto</ESpeakCompat>
+    <ESpeakWithCoverage Condition="'$(ESpeakWithCoverage)' == ''">auto</ESpeakWithCoverage>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <ESpeakSourceDir>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)', '..', 'espeak-ng'))</ESpeakSourceDir>
+    <ESpeakBuildDir>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)', '..', 'build', 'espeak-ng'))</ESpeakBuildDir>
+    <ESpeakBuildType Condition="'$(ESpeakBuildType)' == ''">Release</ESpeakBuildType>
+    <ESpeakLibName Condition="$([MSBuild]::IsOSPlatform('Linux'))">libespeak-ng.so</ESpeakLibName>
+    <ESpeakLibName Condition="$([MSBuild]::IsOSPlatform('OSX'))">libespeak-ng.dylib</ESpeakLibName>
+    <ESpeakLibName Condition="$([MSBuild]::IsOSPlatform('Windows'))">espeak-ng.dll</ESpeakLibName>
+    <ESpeakCMakeCache>$(ESpeakBuildDir)CMakeCache.txt</ESpeakCMakeCache>
+    <ESpeakCMakeArgsStamp>$(ESpeakBuildDir)asespeak-cmake-args.txt</ESpeakCMakeArgsStamp>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ESpeakCMakeOption Include="USE_KLATT" Value="$(ESpeakUseKlatt)" Define="ESPEAK_USE_KLATT" />
+    <ESpeakCMakeOption Include="USE_SPEECHPLAYER" Value="$(ESpeakUseSpeechPlayer)" Define="ESPEAK_USE_SPEECHPLAYER" />
+    <ESpeakCMakeOption Include="USE_MBROLA" Value="$(ESpeakUseMbrola)" Define="ESPEAK_USE_MBROLA" />
+    <ESpeakCMakeOption Include="USE_LIBSONIC" Value="$(ESpeakUseLibSonic)" Define="ESPEAK_USE_LIBSONIC" />
+    <ESpeakCMakeOption Include="USE_ASYNC" Value="$(ESpeakUseAsync)" Define="ESPEAK_USE_ASYNC" />
+    <ESpeakCMakeOption Include="USE_LIBPCAUDIO" Value="$(ESpeakUseLibPcAudio)" Define="ESPEAK_USE_LIBPCAUDIO" />
+    <ESpeakCMakeOption Include="COMPILE_INTONATIONS" Value="$(ESpeakCompileIntonations)" Define="ESPEAK_COMPILE_INTONATIONS" />
+    <ESpeakCMakeOption Include="ENABLE_TESTS" Value="$(ESpeakEnableTests)" Define="ESPEAK_ENABLE_TESTS" />
+    <ESpeakCMakeOption Include="ESPEAK_COMPAT" Value="$(ESpeakCompat)" Define="ESPEAK_COMPAT" />
+    <ESpeakCMakeOption Include="WITH_COVERAGE" Value="$(ESpeakWithCoverage)" Define="ESPEAK_WITH_COVERAGE" />
+  </ItemGroup>
+
+  <Target Name="BuildESpeakNative">
+    <Error Condition="!Exists('$(ESpeakSourceDir)CMakeLists.txt')"
+           Text="espeak-ng submodule is missing. Run: git submodule update --init" />
+    <Error Condition="'%(ESpeakCMakeOption.Value)' != 'true' and '%(ESpeakCMakeOption.Value)' != 'false' and '%(ESpeakCMakeOption.Value)' != 'auto'"
+           Text="espeak-ng option %(ESpeakCMakeOption.Identity) is '%(ESpeakCMakeOption.Value)'; expected true, false or auto." />
+
+    <!-- true -> -DX=ON, false -> -DX=OFF, auto -> -UX -->
+    <ItemGroup>
+      <ESpeakCMakeOption Condition="'%(Value)' == 'true'"><Arg>-D%(Identity)=ON</Arg></ESpeakCMakeOption>
+      <ESpeakCMakeOption Condition="'%(Value)' == 'false'"><Arg>-D%(Identity)=OFF</Arg></ESpeakCMakeOption>
+      <ESpeakCMakeOption Condition="'%(Value)' == 'auto'"><Arg>-U%(Identity)</Arg></ESpeakCMakeOption>
+    </ItemGroup>
+    <PropertyGroup>
+      <_ESpeakCMakeArgs>-DCMAKE_BUILD_TYPE=$(ESpeakBuildType) -DBUILD_SHARED_LIBS=ON -DESPEAK_BUILD_MANPAGES=OFF @(ESpeakCMakeOption->'%(Arg)', ' ')</_ESpeakCMakeArgs>
+    </PropertyGroup>
+
+    <ReadLinesFromFile File="$(ESpeakCMakeArgsStamp)" Condition="Exists('$(ESpeakCMakeArgsStamp)')">
+      <Output TaskParameter="Lines" PropertyName="_ESpeakPrevCMakeArgs" />
+    </ReadLinesFromFile>
+    <Exec Condition="!Exists('$(ESpeakCMakeCache)') or '$(_ESpeakPrevCMakeArgs)' != '$(_ESpeakCMakeArgs)'"
+          Command="cmake -S &quot;$(ESpeakSourceDir.TrimEnd('\/'))&quot; -B &quot;$(ESpeakBuildDir.TrimEnd('\/'))&quot; $(_ESpeakCMakeArgs)" />
+    <WriteLinesToFile File="$(ESpeakCMakeArgsStamp)" Lines="$(_ESpeakCMakeArgs)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+
+    <Exec Command="cmake --build &quot;$(ESpeakBuildDir.TrimEnd('\/'))&quot; --config $(ESpeakBuildType) --target espeak-ng data" />
+
+    <PropertyGroup>
+      <_ESpeakCMakeCacheText>$([System.IO.File]::ReadAllText('$(ESpeakCMakeCache)'))</_ESpeakCMakeCacheText>
+    </PropertyGroup>
+    <ItemGroup>
+      <_ESpeakEnabledOption Include="@(ESpeakCMakeOption)"
+                            Condition="$(_ESpeakCMakeCacheText.Contains('%(Identity):BOOL=ON'))" />
+    </ItemGroup>
+    <PropertyGroup>
+      <DefineConstants>$(DefineConstants);@(_ESpeakEnabledOption->'%(Define)')</DefineConstants>
+    </PropertyGroup>
+    <Message Importance="normal" Text="espeak-ng options enabled: @(_ESpeakEnabledOption, ', ')" />
+  </Target>
+
+  <Target Name="AddESpeakNativeItems" BeforeTargets="AssignTargetPaths" DependsOnTargets="BuildESpeakNative">
+    <ItemGroup>
+      <ESpeakNativeLib Include="$(ESpeakBuildDir)src/libespeak-ng/**/$(ESpeakLibName)*" />
+      <ESpeakData Include="$(ESpeakBuildDir)espeak-ng-data/**/*" />
+      <None Include="@(ESpeakNativeLib)" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+      <None Include="@(ESpeakData)" Link="espeak-ng-data/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+  </Target>
+
+</Project>
